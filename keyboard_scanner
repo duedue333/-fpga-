@@ -1,0 +1,174 @@
+
+`timescale 1ns / 1ps
+////////////////////////////////////////////////////////////////////////////////
+// 全同步矩阵键盘扫描模块（50MHz系统时钟）
+// 1kHz 扫描使能，20ms 消抖，输出单周期脉冲
+//////////////////////////////////////////////
+
+module keyboard_scanner #(
+    parameter CLK_FREQ    = 50_000_000,   // 系统时钟频率
+    parameter SCAN_PERIOD = 50000,        // 1ms = 50M / 50000
+    parameter DEBOUNCE_MS = 20            // 消抖时间（ms）
+) (
+    input            clk,
+    input            rst_n,               // 低电平复位（若不使用请接 1'b1）
+    output reg [3:0] row,
+    input      [3:0] col,
+    output reg       key_valid,           // 单周期正脉冲
+    output reg [3:0] key_code             // 键值 0~15
+);
+
+    // ============================================================
+    // 1. 生成 1kHz 使能信号
+    // ============================================================
+    reg [15:0] cnt_1ms;
+    wire tick_1ms = (cnt_1ms == SCAN_PERIOD - 1);
+
+    always @(posedge clk) begin
+        if (tick_1ms)
+            cnt_1ms <= 0;
+        else
+            cnt_1ms <= cnt_1ms + 1;
+    end
+
+    // ============================================================
+    // 2. 行扫描计数器（在 tick_1ms 时递增）
+    // ============================================================
+    reg [1:0] scan_idx;
+
+    always @(posedge clk) begin
+        if (tick_1ms) begin
+            scan_idx <= scan_idx + 1;      // 自动 0~3 循环
+        end
+    end
+
+    // 行输出（低有效驱动）
+    always @(*) begin
+        case (scan_idx)
+            2'd0: row = 4'b1110;
+            2'd1: row = 4'b1101;
+            2'd2: row = 4'b1011;
+            2'd3: row = 4'b0111;
+            default: row = 4'b1110;
+        endcase
+    end
+
+    // ============================================================
+    // 3. 列值锁存（在 tick_1ms 时锁存，扫描完一行更新对应位）
+    // ============================================================
+    reg [15:0] btn_temp, btn_reg;
+
+    always @(posedge clk) begin
+        if (tick_1ms) begin
+            case (scan_idx)
+                2'd0: btn_temp[3:0]   <= col;
+                2'd1: btn_temp[7:4]   <= col;
+                2'd2: btn_temp[11:8]  <= col;
+                2'd3: btn_temp[15:12] <= col;
+            endcase
+            // 扫描完整一帧（4行）后更新 btn_reg
+            if (scan_idx == 2'd3)
+                btn_reg <= btn_temp;
+        end
+    end
+
+    // 按键按下标志：任意位为 0 表示有键按下
+    wire key_pressed = (btn_reg != 16'hFFFF);
+
+    // ============================================================
+    // 4. 消抖及脉冲输出状态机（同步于 clk）
+    // ============================================================
+    localparam IDLE     = 2'd0;
+    localparam DEBOUNCE = 2'd1;
+    localparam HOLD     = 2'd2;
+
+    reg [1:0] state, next_state;
+    reg [4:0] debounce_cnt;     // 0 到 19，计满 20ms
+    reg       key_triggered;    // 防止重复脉冲
+
+    // 第一段：状态寄存器
+    always @(posedge clk) begin
+        state <= next_state;
+    end
+
+    // 第二段：下一状态组合逻辑
+    always @(*) begin
+        next_state = state;
+        case (state)
+            IDLE: begin
+                if (key_pressed)
+                    next_state = DEBOUNCE;
+                else
+                    next_state = IDLE;
+            end
+            DEBOUNCE: begin
+                if (debounce_cnt >= DEBOUNCE_MS - 1)
+                    next_state = HOLD;
+                else
+                    next_state = DEBOUNCE;
+            end
+            HOLD: begin
+                if (!key_pressed)
+                    next_state = IDLE;
+                else
+                    next_state = HOLD;
+            end
+            default: next_state = IDLE;
+        endcase
+    end
+
+    // 第三段：输出逻辑（在 tick_1ms 有效时更新）
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            debounce_cnt  <= 0;
+            key_valid     <= 0;
+            key_triggered <= 0;
+            key_code      <= 0;
+        end else if (tick_1ms) begin
+            case (state)
+                IDLE: begin
+                    debounce_cnt  <= 0;
+                    key_valid     <= 0;
+                    key_triggered <= 0;
+                end
+                DEBOUNCE: begin
+                    debounce_cnt <= debounce_cnt + 1;
+                    key_valid    <= 0;
+                    key_triggered <= 0;
+                end
+                HOLD: begin
+                    debounce_cnt <= debounce_cnt;
+                    // 刚进入 HOLD 且按键仍按下，产生单脉冲
+                    if (!key_triggered && key_pressed) begin
+                        key_valid <= 1;
+                        // 优先级编码键值
+                        if      (~btn_reg[0]) key_code <= 0;
+                        else if (~btn_reg[1]) key_code <= 1;
+                        else if (~btn_reg[2]) key_code <= 2;
+                        else if (~btn_reg[3]) key_code <= 3;
+                        else if (~btn_reg[4]) key_code <= 4;
+                        else if (~btn_reg[5]) key_code <= 5;
+                        else if (~btn_reg[6]) key_code <= 6;
+                        else if (~btn_reg[7]) key_code <= 7;
+                        else if (~btn_reg[8]) key_code <= 8;
+                        else if (~btn_reg[9]) key_code <= 9;
+                        else if (~btn_reg[10]) key_code <= 10;
+                        else if (~btn_reg[11]) key_code <= 11;
+                        else if (~btn_reg[12]) key_code <= 12;
+                        else if (~btn_reg[13]) key_code <= 13;
+                        else if (~btn_reg[14]) key_code <= 14;
+                        else if (~btn_reg[15]) key_code <= 15;
+                        key_triggered <= 1;
+                    end else begin
+                        key_valid <= 0;
+                    end
+                end
+                default: ;
+            endcase
+        end else begin
+            // 非 tick_1ms 期间，确保 key_valid 为 0（单周期脉冲）
+            key_valid <= 0;
+        end
+    end
+
+endmodule
