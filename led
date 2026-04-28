@@ -1,0 +1,130 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 2025/12/18 09:41:48
+// Design Name: 
+// Module Name: led
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
+
+module led(
+   input        clk,
+   input        sw11,
+   input [1:0]  floor,
+   input        dir,
+   input        running,
+   input [5:0]   tim_ss,
+   output reg [6:0] seg7,
+   output reg [5:0] an,
+   output reg       dian
+    );
+
+    reg [16:0] div; 
+    reg [9:0]  tim;
+    
+    reg [3:0] tim_s;
+    reg [3:0] tim_s1;
+    
+    wire tick = (div == 17'd99999);
+
+    always @(posedge clk) begin
+        if (tick) div <= 0;
+        else div <= div + 1;
+    end
+
+    reg [2:0] digit_sel;
+
+    always @(posedge clk) begin
+        if (sw11) begin
+            tim <= 0;
+            digit_sel <= digit_sel + 1;
+            if(digit_sel>=2)digit_sel<=0;
+        end 
+        else if (tick) begin
+            digit_sel <= digit_sel + 1;
+            if(digit_sel>=5)digit_sel<=0;
+            if (tim <= 1000)
+                tim <= tim + 1;
+        end
+    end
+
+    reg [3:0] dat;
+    
+    always @(*) begin
+        if (sw11) begin
+            case(digit_sel)
+                0: dat = 12;  // '0'
+                1: dat = 12; // 'F'
+                2: dat = 0; // 'F'
+                default:dat=14;
+            endcase
+        end 
+        else begin
+            if (tim <= 500) begin
+                case(digit_sel)
+                    0: dat = 15; // 'N'
+                    1: dat = 0;  // '0'
+                    default: dat = 14; 
+                endcase
+            end 
+            else begin
+                if(running==1)begin
+                   tim_s<=tim_ss/10;
+                   tim_s1<=tim_ss%10;
+                end
+                else begin
+                tim_s<=0;
+                tim_s1<=0;//修改从9到0
+                end
+                case(digit_sel)
+                    1: dat = (floor == 1) ? 1 : 2;
+                    0: dat = (running == 1) ? (dir == 1 ? 10 : 13) : 11;
+//                    4: dat = 9-tim_s1;
+//                    5: dat = 3-tim_s;
+                     4: dat = tim_s1;
+                     5: dat = tim_s;
+                    default: dat = 14; 
+                endcase
+            end
+            
+        end
+    end
+    always @(posedge clk) begin
+        an <= 6'b111111;
+        an[digit_sel] <= 0; 
+        if(digit_sel==5&&dat!=14)dian<=1;
+        else dian<=0;
+        
+        case(dat)
+            0: seg7 <= 7'b1111110; // 0
+            1: seg7 <= 7'b0110000; // 1
+            2: seg7 <= 7'b1101101; // 2
+            3: seg7 <= 7'b1111001; // 3
+            4: seg7 <= 7'b0110011; // 4
+            5: seg7 <= 7'b1011011; // 5
+            6: seg7 <= 7'b0011111; // 6
+            7: seg7 <= 7'b1110000; // 7
+            8: seg7 <= 7'b1111111; // 8
+            9: seg7 <= 7'b1110011; // 9
+            10: seg7 <= 7'b1000000; // 上
+            11: seg7 <= 7'b0000001; // 中 
+            13: seg7 <= 7'b0001000; // 下 
+            12: seg7 <= 7'b1000111; // F
+            15: seg7 <= 7'b1110110; // N 
+            default: seg7 <= 7'b0000000;
+        endcase
+    end
+endmodule
